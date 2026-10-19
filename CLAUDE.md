@@ -10,7 +10,8 @@ ReLeaf is a satellite-imagery deforestation-monitoring website, mainly for NGOs,
 ## Stack
 - Backend: Python, FastAPI, Google Earth Engine (`earthengine-api`), registered as a noncommercial Cloud project.
 - Frontend: React (Vite) and Leaflet.
-- Data: Hansen Global Forest Change (use the newest version in the Earth Engine catalog, currently `UMD/hansen/global_forest_change_2025_v1_13` or later). Later: Dynamic World / ESA WorldCover, Sentinel-2.
+- Data: Hansen Global Forest Change (use the newest version in the Earth Engine catalog, currently `UMD/hansen/global_forest_change_2025_v1_13` or later). Dynamic World for land cover; WRI/Google DeepMind drivers (1 km) as a cause hint. Later: Sentinel-2 + Cloud Score+.
+- No LLM in the core shell. Any later LLM may only word computed numbers; API keys stay in the backend.
 
 ## How I want to work (important)
 - I'm building this myself to learn, the way a software engineer would. **Do not write whole features for me.**
@@ -32,8 +33,8 @@ ReLeaf is a satellite-imagery deforestation-monitoring website, mainly for NGOs,
 - [ ] M0: Set up the repo with `backend/` (FastAPI) and `frontend/` (Vite React), both running locally.
 - [ ] M1: Set up Earth Engine access, with a script that prints tree cover at one point.
 - [ ] M2: Build a Leaflet map with a satellite basemap, where drawing a polygon sends it to the backend.
-- [ ] M3: Add an analysis endpoint returning forest area in 2000 and loss by year (Hansen).
-- [ ] M4: Add a results panel and a forest-loss map layer.
+- [ ] M3: Add an analysis endpoint returning forest area in 2000 and loss by year (Hansen), a likely-driver hint (WRI/GDM drivers 1 km) and before/after images.
+- [ ] M4: Add a results panel, a forest-loss map layer with a 2001–2025 year slider, and a "Land cover now" tab (Dynamic World).
 - [ ] M5: Add one-click PDF report export.
 - [ ] M6: Deploy, so there is a live link.
 - [ ] Then: USP 1, followed by USP 2.

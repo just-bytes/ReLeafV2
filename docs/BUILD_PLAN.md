@@ -1,7 +1,8 @@
 # ReLeaf build plan (from scratch, Oct 19 → Dec 20, 2026)
 
 This plan combines `CLAUDE.md` (the criteria: core shell first, then USP 1, then USP 2) with the "ReLeaf v2 build plan" PDF (the data, architecture and validation details).
-Move this file to `docs/BUILD_PLAN.md` once the repo exists.
+
+> **Issue numbers below are planning labels.** GitHub gives issues and PRs numbers from one shared sequence, so the real issue numbers won't match. Go by the titles.
 
 ---
 
@@ -17,6 +18,9 @@ Move this file to `docs/BUILD_PLAN.md` once the repo exists.
 | PDF | Jinja2 HTML → **WeasyPrint**, built and tested **inside Docker** | WeasyPrint needs the Pango libraries, which are hard to install on Windows. Decide at M5 (see Risks). |
 | Prototyping | Colab + `geemap` notebooks **alongside** the build, not ahead of it | Use them to try out Earth Engine logic (M1, M3, USP 1) before moving it into `backend/`. |
 | Storage | No database. Cache results in memory, keyed by a hash of the area. | As the PDF recommends. The free database options pause or expire. |
+| Land classification | **Dynamic World** (9 classes, 10 m, global, 2015 onward) instead of training a model | Old ReLeaf's U-Net (6 classes, Kaggle data, no measured accuracy) only worked on uploaded images. Dynamic World covers the whole planet and has a published accuracy. Custom ML comes after December. |
+| Cause of loss | **WRI/Google DeepMind drivers dataset** (1 km, 91% accuracy) shown as a hint, never as per-pixel truth | Free inside Earth Engine, so no API key is needed |
+| LLM / API keys | **Not in the core shell.** Later, optionally, for *wording* a summary from computed numbers, with a check that every number appears in the data and a template fallback | An LLM can't see satellite pixels, so it would make up causes. Keys only ever live in the backend (`.env` locally, Secret Manager on Cloud Run). |
 
 ### Versions checked today (pin these)
 - Node 26.2 / npm 11.13 · Python 3.14.5 · Git 2.54 · VS Code 1.140 (all already installed)
@@ -56,7 +60,21 @@ The PDF's `releaf/` Python package becomes `backend/services/`. Keep Earth Engin
 
 About 5 sessions a week of 2–3 hours each. Each phase ends with a buffer session.
 
-### Phase A: Core shell (Oct 19 → Nov 15)
+### Phase A: Core shell (Oct 19 → Nov 17)
+
+**What the core shell analyses for a drawn polygon:**
+| # | Analysis | Dataset | Milestone |
+|---|---|---|---|
+| 1 | Forest area in 2000 (ha) | Hansen v1.13 | M3 |
+| 2 | Loss per year 2001–2025 (ha) + bar chart | Hansen `lossyear` | M3 / M4 |
+| 3 | Total loss (ha, % of 2000 forest) | Hansen | M3 |
+| 4 | Loss map layer coloured by year | Hansen | M4 |
+| 5 | Year slider: cumulative loss up to year X | Hansen `lossyear ≤ X` | M4 |
+| 6 | Likely driver of loss (hint) | WRI/GDM drivers 1 km | M3 / M4 |
+| 7 | Before/after images (about 2000 vs 2025) | Hansen `first_*` / `last_*` bands | M3 / M4 |
+| 8 | Land cover now, whole polygon (% per class + map) | Dynamic World | M4 |
+
+Hansen is **one image** whose `lossyear` band stores the year each pixel was lost (1 = 2001 … 25 = 2025, 0 = never). So "every year" comes from a single dataset, not 25 separate ones.
 
 **M0: Repo and both apps running locally (Oct 19–21)**
 | Issue | Done when |
@@ -81,29 +99,33 @@ About 5 sessions a week of 2–3 hours each. Each phase ends with a buffer sessi
 | #10 Send it to the backend | `POST /api/analyze` takes a GeoJSON geometry (validated with Pydantic) and the backend logs or echoes it back |
 | #11 Area guardrail | Area is computed and anything above the cap (start at about 50,000 ha) is rejected with a clear message, both in the browser **and** on the server |
 
-**M3: Analysis endpoint (Oct 30 → Nov 4)**
+**M3: Analysis endpoint (Oct 30 → Nov 5)**
 | Issue | Done when |
 |---|---|
 | #12 Hansen in a notebook | For one test site: forest area in 2000 (`treecover2000 ≥ 30`, `datamask == 1`) and loss hectares per year (`lossyear` 1–25, `ee.Image.pixelArea()`) |
 | #13 Move it into a pure function | `services/forest.py` takes a geometry and returns a dict; there is one `reduceRegion` call per statistic, at scale 30 |
-| #14 Wire it into the endpoint | `/api/analyze` returns `{forest_2000_ha, loss_by_year: {...}, total_loss_ha}` for a drawn polygon |
+| #14 Wire it into the endpoint | `/api/analyze` returns `{forest_2000_ha, loss_by_year: {...}, total_loss_ha, loss_pct}` for a drawn polygon |
 | #15 Sanity check | The numbers are close to Global Nature Watch figures for the same area (note how far off they are and explain why) |
+| #15a Likely driver hint | `services/drivers.py` returns the main driver class(es) of loss inside the polygon from the WRI/Google DeepMind drivers dataset (`projects/landandcarbon/assets/wri_gdm_drivers_forest_loss_1km/v1_2_2001_2024`), as % of loss area per driver. The response is labelled "1 km context, not per-pixel". |
+| #15b Before/after images | Thumbnail URLs for around 2000 and around 2025 true colour, taken from Hansen's own `first_*` / `last_*` Landsat bands (no extra imagery processing) |
 
-**M4: Results panel and loss layer (Nov 5–9)**
+**M4: Results panel, map layers and year slider (Nov 6–12)**
 | Issue | Done when |
 |---|---|
-| #16 Results panel | Key numbers plus a loss-by-year bar chart (Chart.js or Recharts) |
-| #17 Loss tile layer | The backend returns a `getMapId` tile URL and the frontend adds it as a toggleable layer |
+| #16 Results panel | Key numbers plus a loss-by-year bar chart (Chart.js or Recharts), the driver hint line, and before/after images side by side |
+| #17 Loss tile layer | The backend returns a `getMapId` tile URL with loss coloured by year, and the frontend adds it as a toggleable layer |
+| #17a Year slider | A slider from 2001 to 2025 shows cumulative loss up to the chosen year (`lossyear ≤ X`). The backend serves a tile URL per year; the frontend debounces slider changes and caches URLs it has already fetched |
+| #17b Land cover now | A "Land cover" tab: Dynamic World (`GOOGLE/DYNAMICWORLD/V1`) mode label over the last ~6 months of clear images for the **whole polygon** → % per class (9 classes) as a table/donut chart, plus a coloured class layer with a legend. A note shows Dynamic World's published accuracy (73.8% overall) |
 | #18 UX states | Loading spinner, readable errors, and the caveat "tree cover loss ≠ deforestation" |
 
-**M5: One-click PDF (Nov 10–15)**
+**M5: One-click PDF (Nov 13–17)**
 | Issue | Done when |
 |---|---|
-| #19 Report template | A Jinja2 HTML page shows cover, key numbers, map image, chart, caveats and dataset credits |
+| #19 Report template | A Jinja2 HTML page shows cover, key numbers, map image, loss chart, before/after images, driver hint, land cover breakdown, caveats and dataset credits (Hansen/UMD, WRI/GDM drivers, Dynamic World: all CC-BY-4.0) |
 | #20 Images | The backend downloads `getThumbURL` PNGs and embeds them as base64 (the URLs expire), and draws the chart with matplotlib |
 | #21 PDF endpoint and button | `GET /api/report/{id}.pdf` and a "Download PDF" button; it works for 3 test areas |
 
-### Phase B: Deploy (Nov 16 → 20)
+### Phase B: Deploy (Nov 18 → 22)
 
 **M6: Live link**
 | Issue | Done when |
@@ -113,8 +135,13 @@ About 5 sessions a week of 2–3 hours each. Each phase ends with a buffer sessi
 | #24 Cloud Run deploy | Console → "Continuously deploy from a repository"; a service account with *Earth Engine Resource Viewer* + *Service Usage Consumer*; 2 GiB memory; **no key file in the repo** |
 | #25 Live test and README | 5 areas work on the public URL; README has a screenshot and data credits → **🎉 Core shell shipped** |
 
-### Phase C: USP 1, "What replaced the forest" (Nov 21 → Dec 6)
-The PDF's Feature 1, cut down to fit the time left:
+### After M6, before USP 1 (only if ahead of schedule)
+- Year slider for **land cover** (Dynamic World, 2016–2025)
+- Year slider for **real satellite imagery** (Landsat 2001–2016 + Sentinel-2 2017 onward, annual composites). This is heavier on EECU, so measure the cost first.
+- Place name for the polygon through free reverse geocoding (OpenStreetMap Nominatim, no key)
+
+### Phase C: USP 1, "What replaced the forest" (Nov 23 → Dec 6)
+The PDF's Feature 1, cut down to fit the time left. It builds on #15a (drivers) and #17b (Dynamic World) from the core shell; USP 1 applies them **only to the lost pixels**, adds the corrections, and measures accuracy.
 1. Shared imagery helper: Sentinel-2 `S2_SR_HARMONIZED` with Cloud Score+ `cs_cdf ≥ 0.6` (never QA60), plus before/after true-colour chips.
 2. "What it is now": Dynamic World class probabilities averaged over 3–6 months; take the top class if its probability is ≥ 0.5, otherwise "uncertain"; mark loss within about a year of the end date "too recent".
 3. Overrides, **core set only**: mining polygons, ForTy / FDaP plantations, and the 1 km drivers map as context. (Pasture Watch, MapBiomas and JRC TMF go to v2.1.)
@@ -134,9 +161,10 @@ pytest for geometry checks and parsing (with mocked Earth Engine), GitHub Action
 ## 5. Cut list (cut in this order if you fall behind)
 1. Multi-plot growth tracker → one plot at a time
 2. Provisional 2026 loss (Dynamic World drop / RADD) → limit to 2001–2025
-3. Secondary overrides → keep mining + plantations + drivers only
-4. KML/SHP upload → drawing and GeoJSON only
-5. CI → run tests by hand
+3. Core-shell extras (#17a year slider, #17b land cover tab) → static loss layer only
+4. Secondary overrides → keep mining + plantations + drivers only
+5. KML/SHP upload → drawing and GeoJSON only
+6. CI → run tests by hand
 
 **Never cut:** cost guardrails (#23), the "loss ≠ deforestation" honesty notes, or USP 1 validation.
 
