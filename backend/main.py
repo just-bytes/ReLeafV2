@@ -1,8 +1,12 @@
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 app = FastAPI(title="ReLeaf API")
+api = APIRouter(prefix="/api")
 
 
-@app.get("/health")
+@api.get("/health")
 def health():
     return {"status": "ok"}
+
+
+app.include_router(api)
